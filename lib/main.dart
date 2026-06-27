@@ -1,87 +1,80 @@
 import 'package:flutter/material.dart';
+import 'screens/main_screen.dart';
+import 'services/mongo_service.dart';
+import 'services/storage_service.dart';
+import 'widgets/uri_dialog.dart';
 
 void main() {
-  runApp(const MainApp());
+  runApp(const GhostLightApp());
 }
 
-class MainApp extends StatelessWidget {
-  const MainApp({super.key});
+class GhostLightApp extends StatelessWidget {
+  const GhostLightApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorSchemeSeed: Colors.deepPurple, 
-        brightness: Brightness.light,
-      ),
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        colorSchemeSeed: Colors.deepPurple,
-        brightness: Brightness.dark,
-      ),
-      themeMode: ThemeMode.system,
-      home: const ExpressiveHomePage(),
-    );
+  Widget build(BuildContext context) => MaterialApp(
+        title: 'GhostLight Portal Editor',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: const Color(0xFF5C6BC0),
+          ),
+          useMaterial3: true,
+        ),
+        darkTheme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: const Color(0xFF5C6BC0),
+            brightness: Brightness.dark,
+          ),
+          useMaterial3: true,
+        ),
+        themeMode: ThemeMode.system,
+        home: const _AppInit(),
+      );
+}
+
+class _AppInit extends StatefulWidget {
+  const _AppInit();
+
+  @override
+  State<_AppInit> createState() => _AppInitState();
+}
+
+class _AppInitState extends State<_AppInit> {
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Defer until after the first frame so showDialog has a valid context.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _init());
   }
-}
 
-class ExpressiveHomePage extends StatelessWidget {
-  const ExpressiveHomePage({super.key});
+  Future<void> _init() async {
+    final storedUri = await StorageService.getMongoUri();
+    if (storedUri != null) {
+      final (ok, _) = await MongoService.testConnection(storedUri);
+      if (ok) {
+        await MongoService.connect(storedUri);
+        if (mounted) setState(() => _ready = true);
+        return;
+      }
+    }
+    // No valid stored URI — prompt until we get a working one.
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const UriDialog(),
+    );
+    if (mounted) setState(() => _ready = true);
+  }
 
   @override
   Widget build(BuildContext context) {
-    // Scaffold is marked as const here because all dynamic widgets inside are commented out
+    if (_ready) return const MainScreen();
     return const Scaffold(
-      /*
-      appBar: AppBar(
-        title: const Text('Material 3 Expressive'),
-        centerTitle: true,
-        scrolledUnderElevation: 4.0, 
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16.0),
-        children: [
-          Text(
-            'Dynamic Typography',
-            style: Theme.of(context).textTheme.headlineLarge,
-          ),
-          const SizedBox(height: 16),
-          Card(
-            elevation: 0,
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            child: Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: Text(
-                'Notice how this card doesn\'t use shadows? Material 3 Expressive relies on tonal variations (surfaceContainerHighest) rather than heavy drop shadows.',
-                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 24),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              FilledButton(
-                onPressed: () {},
-                child: const Text('Filled Button'),
-              ),
-              FilledButton.tonal(
-                onPressed: () {},
-                child: const Text('Tonal Button'),
-              ),
-            ],
-          ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton.large(
-        onPressed: () {},
-        child: const Icon(Icons.edit),
-      ),
-      */
+      body: Center(child: CircularProgressIndicator()),
     );
   }
 }
