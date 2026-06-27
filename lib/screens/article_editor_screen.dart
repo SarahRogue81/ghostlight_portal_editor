@@ -289,7 +289,7 @@ class _ArticleEditorScreenState extends State<ArticleEditorScreen> {
           try {
             var adoc = Asciidoctor();
             document.getElementById('content').innerHTML =
-              adoc.convert(${jsonEncode(content)}, { safe: 'safe' });
+              adoc.convert(${jsonEncode(content)}, { safe: 'safe', attributes: { 'showtitle': '' } });
           } catch (e) {
             document.getElementById('content').innerHTML =
               '<p style="color:red"><b>Preview error:</b> ' + e.message + '</p>';

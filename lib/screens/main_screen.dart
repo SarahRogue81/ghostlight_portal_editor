@@ -288,7 +288,6 @@ class _MainScreenState extends State<MainScreen> {
     ];
     final right = <(String, String)>[
       ('Archived', c.archived ? 'Yes' : 'No'),
-      ('Password Digest', c.passwordDigest),
       ...c.phoneNumbers.entries
           .map((e) => ('Phone — ${e.key}', e.value)),
     ];
@@ -331,14 +330,7 @@ class _MainScreenState extends State<MainScreen> {
                           ),
                         ),
                         Expanded(
-                          child: SelectableText(
-                            f.$2,
-                            style: f.$1 == 'Password Digest'
-                                ? const TextStyle(
-                                    fontFamily: 'monospace',
-                                    fontSize: 11)
-                                : null,
-                          ),
+                          child: SelectableText(f.$2),
                         ),
                       ],
                     ),
