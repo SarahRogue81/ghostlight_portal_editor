@@ -70,16 +70,19 @@ set_target_properties(${BINARY_NAME}
 )
 
 
+# === Installation ===
+# By default, "installing" just makes a relocatable bundle in the build
+# directory. This must be set before including generated_plugins.cmake below:
+# some plugins (e.g. flutter_js) compute their own install destination from
+# CMAKE_INSTALL_PREFIX while being added as a subdirectory, and will bake in
+# the wrong (default) path if it isn't already finalized by that point.
+set(BUILD_BUNDLE_DIR "${PROJECT_BINARY_DIR}/bundle")
+set(CMAKE_INSTALL_PREFIX "${BUILD_BUNDLE_DIR}" CACHE PATH "..." FORCE)
+set(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT FALSE)
+
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
 include(flutter/generated_plugins.cmake)
-
-
-# === Installation ===
-# By default, "installing" just makes a relocatable bundle in the build
-# directory.
-set(BUILD_BUNDLE_DIR "${PROJECT_BINARY_DIR}/bundle")
-set(CMAKE_INSTALL_PREFIX "${BUILD_BUNDLE_DIR}" CACHE PATH "..." FORCE)
 
 # Start with a clean build bundle directory every time.
 install(CODE "
@@ -104,11 +107,16 @@ foreach(bundled_library ${PLUGIN_BUNDLED_LIBRARIES})
     COMPONENT Runtime)
 endforeach(bundled_library)
 
-# Copy the native assets provided by the build.dart from all packages.
+# Copy the native assets provided by the build.dart from all packages, if
+# any were generated. This directory only exists when a dependency actually
+# uses Dart native build hooks; installing it unconditionally makes a clean
+# build fail on projects (like this one) that have none.
 set(NATIVE_ASSETS_DIR "${PROJECT_BUILD_DIR}native_assets/linux/")
-install(DIRECTORY "${NATIVE_ASSETS_DIR}"
-   DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
-   COMPONENT Runtime)
+install(CODE "
+  if(EXISTS \"${NATIVE_ASSETS_DIR}\")
+    file(INSTALL DESTINATION \"${INSTALL_BUNDLE_LIB_DIR}\" TYPE DIRECTORY FILES \"${NATIVE_ASSETS_DIR}\")
+  endif()
+  " COMPONENT Runtime)
 
 # Fully re-copy the assets directory on each build to avoid having stale files
 # from a previous install.
