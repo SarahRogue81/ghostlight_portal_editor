@@ -1,7 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:flutter_html/flutter_html.dart';
+import 'package:flutter_js/flutter_js.dart';
 import '../models/article.dart';
 import '../services/mongo_service.dart';
 
@@ -27,6 +28,9 @@ class _ArticleEditorScreenState extends State<ArticleEditorScreen> {
   bool _previewing = false;
   bool _publishing = false;
   String? _previewHtml;
+
+  JavascriptRuntime? _jsRuntime;
+  bool _asciidoctorLoaded = false;
 
   bool get _isUpdate => widget.article != null;
 
@@ -68,39 +72,56 @@ class _ArticleEditorScreenState extends State<ArticleEditorScreen> {
   void dispose() {
     _titleCtrl.dispose();
     _contentCtrl.dispose();
+    _jsRuntime?.dispose();
     super.dispose();
   }
 
-  static const _previewBaseHtml = '''<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      padding: 1.5em 2em;
-      max-width: 900px;
-      margin: 0 auto;
-      line-height: 1.7;
-      background: #000000;
-      color: #ffffff;
-    }
-    h1,h2,h3,h4,h5,h6 { line-height: 1.3; margin-top: 1.4em; color: #ffffff; }
-    code { background:#1e1e1e; padding:2px 5px; border-radius:3px; font-size:.9em; }
-    pre  { background:#1e1e1e; padding:1em; border-radius:4px; overflow-x:auto; }
-    blockquote { border-left:4px solid #555; margin:0; padding-left:1em; color:#cccccc; }
-    table { border-collapse:collapse; width:100%; margin:1em 0; }
-    th,td { border:1px solid #444; padding:8px 12px; text-align:left; }
-    th { background:#1e1e1e; font-weight:600; }
-    img { max-width:100%; }
-    a { color:#7aadff; }
-  </style>
-</head>
-<body>
-  <div id="content"></div>
-</body>
-</html>''';
+  static final Map<String, Style> _previewStyle = {
+    'body': Style(
+      color: Colors.white,
+      backgroundColor: Colors.black,
+      lineHeight: LineHeight.number(1.7),
+    ),
+    for (final tag in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+      tag: Style(color: Colors.white),
+    'code': Style(
+      backgroundColor: const Color(0xFF1E1E1E),
+      padding: HtmlPaddings.symmetric(horizontal: 5),
+    ),
+    'pre': Style(
+      backgroundColor: const Color(0xFF1E1E1E),
+      padding: HtmlPaddings.all(12),
+    ),
+    'blockquote': Style(
+      color: const Color(0xFFCCCCCC),
+      padding: HtmlPaddings.only(left: 16),
+      border: const Border(
+        left: BorderSide(color: Color(0xFF555555), width: 4),
+      ),
+    ),
+    'th': Style(
+      backgroundColor: const Color(0xFF1E1E1E),
+      fontWeight: FontWeight.w600,
+      border: Border.all(color: const Color(0xFF444444)),
+    ),
+    'td': Style(border: Border.all(color: const Color(0xFF444444))),
+    'a': Style(color: const Color(0xFF7AADFF)),
+  };
+
+  JsEvalResult _convertAsciidocToHtml(String asciidoc) {
+    final runtime = _jsRuntime!;
+    final encodedContent = jsonEncode(asciidoc);
+    return runtime.evaluate('''
+      (function() {
+        try {
+          var adoc = Asciidoctor();
+          return adoc.convert($encodedContent, { safe: 'safe', attributes: { showtitle: '' } });
+        } catch (e) {
+          return '<p style="color:red"><b>Preview error:</b> ' + e.message + '</p>';
+        }
+      })();
+    ''');
+  }
 
   Future<void> _togglePreview() async {
     if (_previewing) {
@@ -111,19 +132,27 @@ class _ArticleEditorScreenState extends State<ArticleEditorScreen> {
       return;
     }
     try {
-      await _fetchAsciidoctorJs();
+      final js = await _fetchAsciidoctorJs();
+      _jsRuntime ??= getJavascriptRuntime();
+      if (!_asciidoctorLoaded) {
+        final loadResult = _jsRuntime!.evaluate(js);
+        if (loadResult.isError) {
+          throw Exception(loadResult.stringResult);
+        }
+        _asciidoctorLoaded = true;
+      }
+      final result = _convertAsciidocToHtml(_contentCtrl.text);
+      if (!mounted) return;
+      setState(() {
+        _previewHtml = result.stringResult;
+        _previewing = true;
+      });
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not fetch asciidoctor.js: $e')),
+        SnackBar(content: Text('Could not render preview: $e')),
       );
-      return;
     }
-    if (!mounted) return;
-    setState(() {
-      _previewHtml = _previewBaseHtml;
-      _previewing = true;
-    });
   }
 
   Future<void> _handleCancel() async {
@@ -263,39 +292,17 @@ class _ArticleEditorScreenState extends State<ArticleEditorScreen> {
     if (_previewHtml == null) {
       return const Center(child: CircularProgressIndicator());
     }
-    final content = _contentCtrl.text;
-    return InAppWebView(
-      initialData: InAppWebViewInitialData(
-        data: _previewHtml!,
-        mimeType: 'text/html',
-        encoding: 'utf-8',
+    return Container(
+      color: Colors.black,
+      width: double.infinity,
+      height: double.infinity,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        child: Html(
+          data: _previewHtml!,
+          style: _previewStyle,
+        ),
       ),
-      initialSettings: InAppWebViewSettings(
-        javaScriptEnabled: true,
-        transparentBackground: false,
-      ),
-      onLoadStop: (controller, _) async {
-        // Inject via a dynamic <script> element so the library runs in the
-        // page's true global scope (avoids UMD module-detection false positives
-        // that occur when using evaluateJavascript directly).
-        await controller.evaluateJavascript(source: '''
-          (function() {
-            var s = document.createElement('script');
-            s.textContent = ${jsonEncode(_cachedJs!)};
-            document.head.appendChild(s);
-          })();
-        ''');
-        await controller.evaluateJavascript(source: '''
-          try {
-            var adoc = Asciidoctor();
-            document.getElementById('content').innerHTML =
-              adoc.convert(${jsonEncode(content)}, { safe: 'safe', attributes: { 'showtitle': '' } });
-          } catch (e) {
-            document.getElementById('content').innerHTML =
-              '<p style="color:red"><b>Preview error:</b> ' + e.message + '</p>';
-          }
-        ''');
-      },
     );
   }
 }
