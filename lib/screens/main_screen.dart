@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import '../models/article.dart';
 import '../models/client.dart';
+import '../models/client_image.dart';
 import '../services/mongo_service.dart';
 import '../widgets/delete_client_dialog.dart';
 import 'article_editor_screen.dart';
 import 'client_form_screen.dart';
+import 'images_screen.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -17,8 +19,10 @@ class _MainScreenState extends State<MainScreen> {
   List<Client> _clients = [];
   Client? _selected;
   List<Article> _articles = [];
+  List<ClientImage> _images = [];
   bool _loadingClients = true;
   bool _loadingArticles = false;
+  bool _loadingImages = false;
 
   @override
   void initState() {
@@ -43,9 +47,13 @@ class _MainScreenState extends State<MainScreen> {
         _clients = clients;
         _selected = reselect;
         _articles = [];
+        _images = [];
         _loadingClients = false;
       });
-      if (reselect != null) _loadArticles(reselect.clientId);
+      if (reselect != null) {
+        _loadArticles(reselect.clientId);
+        _loadImages(reselect.clientId);
+      }
     } catch (e) {
       setState(() => _loadingClients = false);
       _showError('Failed to load clients: $e');
@@ -66,6 +74,20 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
+  Future<void> _loadImages(String clientId) async {
+    setState(() => _loadingImages = true);
+    try {
+      final images = await MongoService.instance.getImages(clientId);
+      setState(() {
+        _images = images;
+        _loadingImages = false;
+      });
+    } catch (e) {
+      setState(() => _loadingImages = false);
+      _showError('Failed to load images: $e');
+    }
+  }
+
   void _showError(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
@@ -78,8 +100,12 @@ class _MainScreenState extends State<MainScreen> {
     setState(() {
       _selected = c;
       _articles = [];
+      _images = [];
     });
-    if (c != null) _loadArticles(c.clientId);
+    if (c != null) {
+      _loadArticles(c.clientId);
+      _loadImages(c.clientId);
+    }
   }
 
   Future<void> _handleClientCreate() async {
@@ -181,6 +207,81 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
+  // ── Image actions ────────────────────────────────────────────────────────
+
+  Future<void> _openImageEditor({ClientImage? image}) async {
+    if (_selected == null) return;
+    final saved = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ImagesScreen(
+          clientId: _selected!.clientId,
+          image: image,
+        ),
+        fullscreenDialog: true,
+      ),
+    );
+    if (saved == true && _selected != null) {
+      await _loadImages(_selected!.clientId);
+    }
+  }
+
+  Future<void> _handleImageDelete(ClientImage image) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Image'),
+        content: const Text('Are you sure?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+              foregroundColor: Theme.of(ctx).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      try {
+        await MongoService.instance.deleteImage(image.id!);
+        if (_selected != null) await _loadImages(_selected!.clientId);
+      } catch (e) {
+        _showError('Delete failed: $e');
+      }
+    }
+  }
+
+  Future<void> _showImageContextMenu(
+    Offset globalPosition,
+    ClientImage image,
+  ) async {
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        globalPosition & const Size(1, 1),
+        Offset.zero & overlay.size,
+      ),
+      items: const [
+        PopupMenuItem(value: 'update', child: Text('Update')),
+        PopupMenuItem(value: 'delete', child: Text('Delete')),
+      ],
+    );
+    if (selected == 'update') {
+      _openImageEditor(image: image);
+    } else if (selected == 'delete') {
+      _handleImageDelete(image);
+    }
+  }
+
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   String _fmtDate(DateTime utc) {
@@ -211,6 +312,8 @@ class _MainScreenState extends State<MainScreen> {
                     _buildClientDetails(_selected!),
                     const SizedBox(height: 24),
                     _buildArticlesSection(),
+                    const SizedBox(height: 24),
+                    _buildImagesSection(),
                     const SizedBox(height: 16),
                   ],
                 ),
@@ -415,6 +518,80 @@ class _MainScreenState extends State<MainScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  // ── Images section ────────────────────────────────────────────────────────
+
+  Widget _buildImagesSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('Images', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        if (_loadingImages)
+          const Center(
+              child: Padding(
+            padding: EdgeInsets.all(24),
+            child: CircularProgressIndicator(),
+          ))
+        else if (_images.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 24),
+            child: Center(child: Text('No images yet.')),
+          )
+        else
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: _images.map(_buildImageThumbnail).toList(),
+          ),
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerRight,
+          child: FilledButton.icon(
+            onPressed: () => _openImageEditor(),
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('Add Image'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildImageThumbnail(ClientImage image) {
+    return GestureDetector(
+      onLongPressStart: (details) =>
+          _showImageContextMenu(details.globalPosition, image),
+      onSecondaryTapDown: (details) =>
+          _showImageContextMenu(details.globalPosition, image),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 100,
+            height: 100,
+            decoration: BoxDecoration(
+              border: Border.all(color: Theme.of(context).dividerColor),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: image.data.isNotEmpty
+                ? Image.memory(image.data, fit: BoxFit.cover)
+                : const Icon(Icons.broken_image),
+          ),
+          const SizedBox(height: 4),
+          SizedBox(
+            width: 100,
+            child: Text(
+              image.filename,
+              style: Theme.of(context).textTheme.bodySmall,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

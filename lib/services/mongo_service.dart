@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:mongo_dart/mongo_dart.dart';
 import '../models/client.dart';
 import '../models/article.dart';
+import '../models/client_image.dart';
 
 class MongoService {
   static MongoService? _instance;
@@ -119,6 +120,7 @@ class MongoService {
 
   DbCollection get _clients => _db.collection('clients');
   DbCollection get _articles => _db.collection('articles');
+  DbCollection get _images => _db.collection('images');
 
   // ── Clients ──────────────────────────────────────────────────────────────
 
@@ -167,4 +169,38 @@ class MongoService {
 
   Future<void> deleteArticle(ObjectId id) =>
       _articles.deleteOne(where.id(id));
+
+  // ── Images ───────────────────────────────────────────────────────────────
+
+  Future<List<ClientImage>> getImages(String clientId) async {
+    final docs = await _images
+        .find(where.eq('client_id', clientId).sortBy('filename'))
+        .toList();
+    return docs.map(ClientImage.fromMap).toList();
+  }
+
+  /// Finds an existing image with the given filename for the client, if any.
+  /// [excludeId] excludes a specific document (e.g. the one being updated).
+  Future<ClientImage?> findImageByFilename(
+    String clientId,
+    String filename, {
+    ObjectId? excludeId,
+  }) async {
+    var selector = where.eq('client_id', clientId).eq('filename', filename);
+    if (excludeId != null) {
+      selector = selector.ne('_id', excludeId);
+    }
+    final doc = await _images.findOne(selector);
+    return doc == null ? null : ClientImage.fromMap(doc);
+  }
+
+  Future<void> createImage(ClientImage image) =>
+      _images.insertOne(image.toMap());
+
+  Future<void> updateImage(ClientImage image) async {
+    final data = image.toMap()..remove('_id');
+    await _images.updateOne(where.id(image.id!), {'\$set': data});
+  }
+
+  Future<void> deleteImage(ObjectId id) => _images.deleteOne(where.id(id));
 }
