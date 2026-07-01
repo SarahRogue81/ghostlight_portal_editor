@@ -46,3 +46,6 @@ app.*.map.json
 
 # Claude Code
 .claude/
+
+# Visuall Studio Code
+.vscode/
